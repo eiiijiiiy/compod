@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 from collections import defaultdict
-from sage.all import polytopes, QQ, Polyhedron
+from sage.all import QQ, Polyhedron
 from sklearn.neighbors import NearestNeighbors
 
 from .logger import make_logger

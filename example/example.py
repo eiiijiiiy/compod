@@ -7,7 +7,7 @@ model = "bunny"
 file = "data/{}/convexes_refined/file.npz".format(model)
 
 vg = VertexGroup(file,verbosity=20,debug_export=True)
-cc = PolyhedralComplex(vg,device='gpu',verbosity=20)
+cc = PolyhedralComplex(vg,device='cpu',verbosity=20)
 
 cc.construct_partition()
 cc.add_bounding_box_planes()

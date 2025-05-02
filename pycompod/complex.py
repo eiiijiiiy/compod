@@ -14,9 +14,9 @@ from pathlib import Path
 
 import numpy as np
 import scipy.spatial
-from tqdm import trange, tqdm
+from tqdm import tqdm
 import networkx as nx
-from sage.all import QQ, RDF, ZZ, Polyhedron, vector, arctan2
+from sage.all import QQ, Polyhedron, vector, arctan2
 from treelib import Tree
 from collections import defaultdict
 from shapely.geometry import Polygon
@@ -24,6 +24,7 @@ from shapely import contains_xy
 from multiprocessing import Process, Pool
 
 import open3d as o3d
+import trimesh as tm
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=FutureWarning)
@@ -82,11 +83,8 @@ class PolyhedralComplex:
         self.tree = None
         self.graph = None
         self.device = device
-        if self.device == 'gpu':
-            import torch
-            self.torch = torch
-        else:
-            self.torch = None
+        print("Using device: ", self.device)
+        self.torch = None
 
         self.construct_graph = construct_graph
         self.partition_initialized = False
@@ -1042,6 +1040,7 @@ class PolyhedralComplex:
     def save_in_cells_explode(self,out_file,shrink_percentage=0.01):
 
         self.logger.info('Save exploded inside cells...')
+        # self.graph.nodes[c0]["diff_volume"]
 
         os.makedirs(os.path.dirname(out_file),exist_ok=True)
         f = open(out_file,'w')
@@ -1109,7 +1108,7 @@ class PolyhedralComplex:
 
 
     def save_in_cells(self,out_file):
-
+        parts = []
         os.makedirs(os.path.dirname(out_file),exist_ok=True)
         f = open(out_file,'w')
 
@@ -1127,7 +1126,15 @@ class PolyhedralComplex:
         nodes = list(view.nodes())
         self.number_of_inside_cells = len(nodes)
         self.logger.info('Save inside {} cells...'.format(len(nodes)))
+        cell_convexity = []
         for node in nodes:
+            if 'diff_volume' in self.graph.nodes[node]:
+                convexity = 1 - self.graph.nodes[node]['diff_volume'] / self.graph.nodes[node]['volume']
+                print("with diff volume")
+            else:
+                convexity = 1.0
+            self.logger.info('convexity: {}'.format(convexity))
+            cell_convexity.append(convexity)
             c = np.random.randint(low=100,high=255,size=3)
             polyhedron = self.cells.get(node)
             ss = polyhedron.render_solid().obj_repr(polyhedron.render_solid().default_render_params())
@@ -1135,6 +1142,9 @@ class PolyhedralComplex:
                 v = v.split(' ')
                 verts.append([float(v[1]), float(v[2]), float(v[3])])
                 vcolors.append(c)
+            
+            ch = tm.convex.convex_hull(np.array(verts))
+            parts.append(ch)
 
             for fa in ss[3]:
                 tf = []
@@ -1144,6 +1154,7 @@ class PolyhedralComplex:
             vert_count+=len(ss[2])
 
         self.complexExporter.write_surface(out_file, points=verts, facets=facets, pcolors=vcolors)
+        return parts, cell_convexity
 
 
 
@@ -2334,6 +2345,7 @@ class PolyhedralComplex:
                 edges = np.delete(edges,0,axis=0)
 
             if edges.shape[0] == 0:
+                print("should break early")
                 break
 
             pbar.update(1)
@@ -2343,12 +2355,17 @@ class PolyhedralComplex:
             c0 = cc[0];
             c1 = cc[1]
 
+            c0_diff_volume = self.graph.nodes[c0]["diff_volume"] if "diff_volume" in self.graph.nodes[c0] else 0
+            c1_diff_volume = self.graph.nodes[c1]["diff_volume"] if "diff_volume" in self.graph.nodes[c1] else 0
+            c01_diff_volume = abs(self.graph.edges[c0, c1]["union_volume"] - (self.graph.nodes[c0]["volume"] + self.graph.nodes[c1]["volume"]))
             self.graph.nodes[c0]["volume"] = self.graph.edges[c0, c1]["union_volume"]
             self.cells[c0] = _make_new_cell(c0, c1)
             nx.contracted_edge(self.graph, (c0, c1), self_loops=False, copy=False)
 
             del self.cells[c1]
             del self.graph.nodes[c0]["contraction"]
+            self.graph.nodes[c0]["diff_volume"] = c0_diff_volume + c1_diff_volume + c01_diff_volume
+            assert (self.graph.nodes[c0]["diff_volume"] < self.graph.nodes[c0]["volume"])
 
             vol_diffs, edges = _update_queue(vol_diffs,edges,c0)
 
